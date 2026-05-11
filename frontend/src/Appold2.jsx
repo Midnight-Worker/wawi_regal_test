@@ -34,23 +34,9 @@ const shelfLayout = {
   ]
 };
 
-const emptyArticleForm = {
-  name: "",
-  ean: "",
-  quantity: 0,
-  description: "",
-  shelf_position: 1,
-  category_id: "",
-  green_from: 100,
-  yellow_from: 20,
-  red_below: 5
-};
-
 function App() {
   const [articles, setArticles] = useState([]);
-  const [allArticles, setAllArticles] = useState([]);
   const [categories, setCategories] = useState([]);
-
   const [ledStatus, setLedStatus] = useState({
     connected: false,
     port: "",
@@ -67,13 +53,6 @@ function App() {
   const [ports, setPorts] = useState([]);
   const [selectedPort, setSelectedPort] = useState("/dev/ttyUSB0");
   const [baudrate, setBaudrate] = useState(115200);
-
-  const [showArticleForm, setShowArticleForm] = useState(false);
-  const [newArticle, setNewArticle] = useState(emptyArticleForm);
-  const [newArticleImage, setNewArticleImage] = useState(null);
-  const [savingArticle, setSavingArticle] = useState(false);
-
-  const [moveTargets, setMoveTargets] = useState({});
 
   async function apiGet(path) {
     const response = await fetch(path);
@@ -92,38 +71,6 @@ function App() {
     return await response.json();
   }
 
-  async function apiPut(path, body = {}) {
-    const response = await fetch(path, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-
-    return await response.json();
-  }
-
-  async function apiDelete(path) {
-    const response = await fetch(path, {
-      method: "DELETE"
-    });
-
-    return await response.json();
-  }
-
-  async function apiUploadArticleImage(articleId, imageFile) {
-    const formData = new FormData();
-    formData.append("image", imageFile);
-
-    const response = await fetch(`/api/articles/${articleId}/image`, {
-      method: "POST",
-      body: formData
-    });
-
-    return await response.json();
-  }
-
   function showMessage(text) {
     setMessage(text || "");
 
@@ -133,187 +80,6 @@ function App() {
         setMessage("");
       }, 3500);
     }
-  }
-
-  function formatShelfNumber(number) {
-    return String(number).padStart(2, "0");
-  }
-
-  function updateNewArticleField(field, value) {
-    setNewArticle((old) => ({
-      ...old,
-      [field]: value
-    }));
-  }
-
-  function resetArticleForm() {
-    setNewArticle(emptyArticleForm);
-    setNewArticleImage(null);
-    setShowArticleForm(false);
-  }
-
-  function updateMoveTarget(articleId, shelfPosition) {
-    setMoveTargets((old) => ({
-      ...old,
-      [articleId]: Number(shelfPosition)
-    }));
-  }
-
-  function getMoveTarget(article) {
-    return moveTargets[article.id] || article.shelf_position;
-  }
-
-  function buildArticlePayload(article, overrides = {}) {
-    const nextArticle = {
-      ...article,
-      ...overrides
-    };
-
-    return {
-      name: nextArticle.name,
-      ean: nextArticle.ean || "",
-      quantity: Number(nextArticle.quantity || 0),
-      description: nextArticle.description || "",
-      shelf_position: Number(nextArticle.shelf_position),
-      category_id: nextArticle.category_id ? Number(nextArticle.category_id) : null,
-      green_from: Number(nextArticle.green_from || 100),
-      yellow_from: Number(nextArticle.yellow_from || 20),
-      red_below: Number(nextArticle.red_below || 5)
-    };
-  }
-
-  async function saveNewArticle() {
-    try {
-      setSavingArticle(true);
-
-      if (!newArticle.name.trim()) {
-        showMessage("Artikelname fehlt");
-        return;
-      }
-
-      const createResult = await apiPost("/api/articles", {
-        name: newArticle.name,
-        ean: newArticle.ean,
-        quantity: Number(newArticle.quantity),
-        description: newArticle.description,
-        shelf_position: Number(newArticle.shelf_position),
-        category_id: newArticle.category_id ? Number(newArticle.category_id) : null,
-        green_from: Number(newArticle.green_from),
-        yellow_from: Number(newArticle.yellow_from),
-        red_below: Number(newArticle.red_below)
-      });
-
-      if (!createResult.ok) {
-        showMessage(createResult.message || "Artikel konnte nicht angelegt werden");
-        return;
-      }
-
-      let finalMessage = createResult.message || "Artikel angelegt";
-
-      if (newArticleImage && createResult.article?.id) {
-        const imageResult = await apiUploadArticleImage(
-          createResult.article.id,
-          newArticleImage
-        );
-
-        if (!imageResult.ok) {
-          showMessage(
-            `Artikel angelegt, aber Bild konnte nicht gespeichert werden: ${imageResult.message}`
-          );
-          return;
-        }
-
-        finalMessage = "Artikel mit Bild angelegt";
-      }
-
-      showMessage(finalMessage);
-      resetArticleForm();
-
-      await loadAllArticles();
-      await loadArticles();
-
-      if (createResult.article?.shelf_position) {
-        await lightShelfPreview(createResult.article.shelf_position, "w");
-      }
-    } catch (error) {
-      showMessage(`Artikel konnte nicht gespeichert werden: ${error.message}`);
-    } finally {
-      setSavingArticle(false);
-    }
-  }
-
-  async function moveArticle(article) {
-    const nextShelfPosition = Number(getMoveTarget(article));
-
-    if (nextShelfPosition === Number(article.shelf_position)) {
-      showMessage("Artikel ist bereits in diesem Fach");
-      return;
-    }
-
-    const result = await apiPut(
-      `/api/articles/${article.id}`,
-      buildArticlePayload(article, {
-        shelf_position: nextShelfPosition
-      })
-    );
-
-    if (!result.ok) {
-      showMessage(result.message || "Artikel konnte nicht umgeräumt werden");
-      return;
-    }
-
-    showMessage(
-      `${article.name} wurde nach Fach ${formatShelfNumber(nextShelfPosition)} umgeräumt`
-    );
-
-    setMoveTargets((old) => {
-      const next = { ...old };
-      delete next[article.id];
-      return next;
-    });
-
-    await loadAllArticles();
-    await loadArticles();
-    await lightShelfPreview(nextShelfPosition, "w");
-  }
-
-  async function deleteArticle(article) {
-    const confirmed = window.confirm(
-      `Artikel wirklich aus der App entfernen?\n\n${article.name}\nFach ${formatShelfNumber(article.shelf_position)}`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    await apiPost("/api/led/all/off");
-
-    const result = await apiDelete(`/api/articles/${article.id}`);
-
-    if (!result.ok) {
-      showMessage(result.message || "Artikel konnte nicht gelöscht werden");
-      return;
-    }
-
-    showMessage(`${article.name} wurde aus dem System entfernt`);
-
-    setArticles((oldArticles) =>
-      oldArticles.filter((item) => item.id !== article.id)
-    );
-
-    setAllArticles((oldArticles) =>
-      oldArticles.filter((item) => item.id !== article.id)
-    );
-
-    setMoveTargets((old) => {
-      const next = { ...old };
-      delete next[article.id];
-      return next;
-    });
-
-    await loadAllArticles();
-    await loadArticles();
-    await loadLedStatus();
   }
 
   async function loadCategories() {
@@ -328,21 +94,6 @@ function App() {
       setCategories(result.categories);
     } catch (error) {
       showMessage(`Kategorien konnten nicht geladen werden: ${error.message}`);
-    }
-  }
-
-  async function loadAllArticles() {
-    try {
-      const result = await apiGet("/api/articles");
-
-      if (!result.ok) {
-        showMessage(result.message || "Regalübersicht konnte nicht geladen werden");
-        return;
-      }
-
-      setAllArticles(result.articles);
-    } catch (error) {
-      showMessage(`Regalübersicht konnte nicht geladen werden: ${error.message}`);
     }
   }
 
@@ -448,19 +199,15 @@ function App() {
     const result = await apiPost("/api/led/all/off");
 
     showMessage(result.message);
-    await loadLedStatus();
   }
 
   async function strandtest() {
     const result = await apiPost("/api/led/strandtest");
 
     showMessage(result.message);
-    await loadLedStatus();
   }
 
   async function lightArticle(articleId) {
-    await apiPost("/api/led/all/off");
-
     const result = await apiPost(`/api/articles/${articleId}/light`);
 
     showMessage(result.message);
@@ -473,19 +220,12 @@ function App() {
   }
 
   async function lightShelfPreview(shelfNumber, color = "w") {
-    await apiPost("/api/led/all/off");
-
     const result = await apiPost("/api/led/single", {
       number: shelfNumber,
       color
     });
 
-    if (result.ok) {
-      showMessage(`Fach ${formatShelfNumber(shelfNumber)} markiert`);
-    } else {
-      showMessage(result.message);
-    }
-
+    showMessage(result.message);
     await loadLedStatus();
   }
 
@@ -500,12 +240,6 @@ function App() {
 
     if (result.ok && result.article) {
       setArticles((oldArticles) =>
-        oldArticles.map((item) =>
-          item.id === article.id ? result.article : item
-        )
-      );
-
-      setAllArticles((oldArticles) =>
         oldArticles.map((item) =>
           item.id === article.id ? result.article : item
         )
@@ -525,11 +259,14 @@ function App() {
     setSelectedShelf("");
   }
 
+  function formatShelfNumber(number) {
+    return String(number).padStart(2, "0");
+  }
+
   function handleShelfClick(shelfNumber) {
     setSelectedShelf(String(shelfNumber));
     setSearch("");
     setSelectedCategoryId("");
-    lightShelfPreview(shelfNumber, "w");
   }
 
   function getShelfStatusClass(shelfArticles) {
@@ -554,29 +291,15 @@ function App() {
     return "filled";
   }
 
-  function getShelfTitle(shelfNumber, shelfArticles, resultArticles) {
+  function getShelfTitle(shelfNumber, shelfArticles) {
     if (!shelfArticles || shelfArticles.length === 0) {
-      return `Fach ${formatShelfNumber(shelfNumber)}`;
+      return `Fach ${shelfNumber}`;
     }
 
-    const lines = [
-      `Fach ${formatShelfNumber(shelfNumber)}`,
-      `${shelfArticles.length} Artikel insgesamt`
-    ];
-
-    if (resultArticles && resultArticles.length !== shelfArticles.length) {
-      lines.push(`${resultArticles.length} Treffer in aktueller Suche`);
-    }
-
-    lines.push("");
-    lines.push(...shelfArticles.map((item) => `- ${item.name}`));
-
-    return lines.join("\n");
+    return shelfArticles.map((item) => item.name).join(", ");
   }
 
   function renderShelfBlock(title, rows) {
-    const hasSearchFilter = Boolean(search.trim() || selectedCategoryId || selectedShelf);
-
     return (
       <div className="regal-block">
         <div className="regal-title">{title}</div>
@@ -586,31 +309,24 @@ function App() {
             <div className="regal-row" key={`${title}-${rowIndex}`}>
               {row.map((shelfNumber) => {
                 const shelfArticles = shelfGroups.get(shelfNumber) || [];
-                const resultArticles = resultShelfGroups.get(shelfNumber) || [];
                 const statusClass = getShelfStatusClass(shelfArticles);
                 const isSelected = String(shelfNumber) === String(selectedShelf);
-                const hasResultMatch = hasSearchFilter && resultArticles.length > 0;
 
                 return (
                   <button
                     key={shelfNumber}
                     className={`regal-cell ${statusClass} ${
                       isSelected ? "selected" : ""
-                    } ${hasResultMatch ? "has-match" : ""}`}
+                    }`}
                     onClick={() => handleShelfClick(shelfNumber)}
-                    title={getShelfTitle(shelfNumber, shelfArticles, resultArticles)}
+                    onDoubleClick={() => lightShelfPreview(shelfNumber)}
+                    title={getShelfTitle(shelfNumber, shelfArticles)}
                   >
-                    <span className="regal-number">
-                      {formatShelfNumber(shelfNumber)}
-                    </span>
+                    <span className="regal-number">{formatShelfNumber(shelfNumber)}</span>
 
                     {shelfArticles.length > 0 && (
-                      <small
-                        className={
-                          hasResultMatch ? "regal-count match" : "regal-count"
-                        }
-                      >
-                        {hasResultMatch ? resultArticles.length : shelfArticles.length}
+                      <small className="regal-count">
+                        {shelfArticles.length}
                       </small>
                     )}
                   </button>
@@ -624,22 +340,6 @@ function App() {
   }
 
   const shelfGroups = useMemo(() => {
-    const map = new Map();
-
-    for (const article of allArticles) {
-      const key = article.shelf_position;
-
-      if (!map.has(key)) {
-        map.set(key, []);
-      }
-
-      map.get(key).push(article);
-    }
-
-    return map;
-  }, [allArticles]);
-
-  const resultShelfGroups = useMemo(() => {
     const map = new Map();
 
     for (const article of articles) {
@@ -681,7 +381,6 @@ function App() {
     loadCategories();
     loadPorts();
     loadLedStatus();
-    loadAllArticles();
     loadArticles();
 
     const interval = window.setInterval(() => {
@@ -804,18 +503,10 @@ function App() {
           <button className="primary" onClick={loadArticles}>
             Suchen
           </button>
-
-          <button
-            className="success-button"
-            onClick={() => setShowArticleForm((old) => !old)}
-          >
-            + Neuer Artikel
-          </button>
         </div>
 
         <div className="result-info">
           {loading ? "Lade Artikel..." : `${articles.length} Artikel gefunden`}
-
           {activeFilterText && (
             <>
               <span className="filter-divider"> · </span>
@@ -827,196 +518,6 @@ function App() {
           )}
         </div>
       </section>
-
-      {showArticleForm && (
-        <section className="card article-form-card">
-          <div className="section-heading">
-            <div>
-              <h2>Neuen Artikel erfassen</h2>
-              <p className="muted">
-                Artikel einpflegen, Fach zuordnen und optional direkt ein Bild
-                vom Tablet hochladen.
-              </p>
-            </div>
-
-            <button onClick={resetArticleForm}>Schließen</button>
-          </div>
-
-          <div className="article-form-grid">
-            <label>
-              Artikelname
-              <input
-                value={newArticle.name}
-                placeholder="z. B. Spax Schrauben 4 x 30 mm"
-                onChange={(event) =>
-                  updateNewArticleField("name", event.target.value)
-                }
-              />
-            </label>
-
-            <label>
-              EAN
-              <input
-                value={newArticle.ean}
-                placeholder="EAN-Nummer"
-                onChange={(event) =>
-                  updateNewArticleField("ean", event.target.value)
-                }
-              />
-            </label>
-
-            <label>
-              Kategorie
-              <select
-                value={newArticle.category_id}
-                onChange={(event) =>
-                  updateNewArticleField("category_id", event.target.value)
-                }
-              >
-                <option value="">Keine Kategorie</option>
-
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Bestand
-              <input
-                type="number"
-                min="0"
-                value={newArticle.quantity}
-                onChange={(event) =>
-                  updateNewArticleField("quantity", Number(event.target.value))
-                }
-              />
-            </label>
-
-            <label>
-              Regalplatz
-              <select
-                value={newArticle.shelf_position}
-                onChange={(event) =>
-                  updateNewArticleField(
-                    "shelf_position",
-                    Number(event.target.value)
-                  )
-                }
-              >
-                {Array.from({ length: 72 }, (_, index) => {
-                  const shelfNumber = index + 1;
-
-                  return (
-                    <option key={shelfNumber} value={shelfNumber}>
-                      Fach {formatShelfNumber(shelfNumber)}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-
-            <label>
-              Rot unter
-              <input
-                type="number"
-                min="0"
-                value={newArticle.red_below}
-                onChange={(event) =>
-                  updateNewArticleField("red_below", Number(event.target.value))
-                }
-              />
-            </label>
-
-            <label>
-              Gelb unter
-              <input
-                type="number"
-                min="0"
-                value={newArticle.yellow_from}
-                onChange={(event) =>
-                  updateNewArticleField(
-                    "yellow_from",
-                    Number(event.target.value)
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              Grün ab
-              <input
-                type="number"
-                min="0"
-                value={newArticle.green_from}
-                onChange={(event) =>
-                  updateNewArticleField("green_from", Number(event.target.value))
-                }
-              />
-            </label>
-          </div>
-
-          <label className="description-field">
-            Beschreibung
-            <textarea
-              value={newArticle.description}
-              placeholder="Kurze Beschreibung, Größe, Material, Besonderheiten..."
-              onChange={(event) =>
-                updateNewArticleField("description", event.target.value)
-              }
-            />
-          </label>
-
-          <div className="image-upload-row">
-            <label className="image-upload-box">
-              Bild auswählen oder Foto machen
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={(event) =>
-                  setNewArticleImage(event.target.files?.[0] || null)
-                }
-              />
-
-              <span>
-                {newArticleImage
-                  ? newArticleImage.name
-                  : "Noch kein Bild ausgewählt"}
-              </span>
-            </label>
-
-            {newArticleImage && (
-              <div className="image-preview">
-                <img
-                  src={URL.createObjectURL(newArticleImage)}
-                  alt="Vorschau"
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="article-form-actions">
-            <button
-              onClick={() =>
-                lightShelfPreview(Number(newArticle.shelf_position), "w")
-              }
-            >
-              Fach {formatShelfNumber(newArticle.shelf_position)} testen
-            </button>
-
-            <button
-              className="success-button"
-              onClick={saveNewArticle}
-              disabled={savingArticle}
-            >
-              {savingArticle ? "Speichere..." : "Artikel speichern"}
-            </button>
-          </div>
-        </section>
-      )}
 
       <section className="shelf-overview">
         <div className="section-heading">
@@ -1042,13 +543,13 @@ function App() {
         </div>
 
         <div className="regal-layout">
-          {renderShelfBlock("Linke Regalhälfte · Fach 01–36", shelfLayout.left)}
+          {renderShelfBlock("Linke Regalhälfte · Fach 1–36", shelfLayout.left)}
           {renderShelfBlock("Rechte Regalhälfte · Fach 37–72", shelfLayout.right)}
         </div>
 
         <p className="regal-help">
-          Tippen filtert die Artikelliste nach diesem Fach und schaltet vorher
-          alle LEDs aus. Danach leuchtet nur das gewählte Fach weiß.
+          Tippen filtert die Artikelliste nach diesem Fach. Doppeltippen lässt
+          das Fach weiß aufleuchten.
         </p>
       </section>
 
@@ -1077,9 +578,7 @@ function App() {
                   {stockColorNames[article.stock_color] || "?"}
                 </span>
 
-                <span className="shelf-badge">
-                  Fach {formatShelfNumber(article.shelf_position)}
-                </span>
+                <span className="shelf-badge">Fach {formatShelfNumber(article.shelf_position)}</span>
 
                 {article.category_name && (
                   <span className="category-badge">{article.category_name}</span>
@@ -1148,37 +647,6 @@ function App() {
                     setQuantity(article, Number(event.target.value))
                   }
                 />
-              </div>
-
-              <div className="article-management">
-                <label className="move-field">
-                  Umräumen nach
-                  <select
-                    value={getMoveTarget(article)}
-                    onChange={(event) =>
-                      updateMoveTarget(article.id, Number(event.target.value))
-                    }
-                  >
-                    {Array.from({ length: 72 }, (_, index) => {
-                      const shelfNumber = index + 1;
-
-                      return (
-                        <option key={shelfNumber} value={shelfNumber}>
-                          Fach {formatShelfNumber(shelfNumber)}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-
-                <button onClick={() => moveArticle(article)}>Umräumen</button>
-
-                <button
-                  className="danger-button"
-                  onClick={() => deleteArticle(article)}
-                >
-                  Löschen
-                </button>
               </div>
             </div>
           </article>

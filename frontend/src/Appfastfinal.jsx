@@ -73,8 +73,6 @@ function App() {
   const [newArticleImage, setNewArticleImage] = useState(null);
   const [savingArticle, setSavingArticle] = useState(false);
 
-  const [moveTargets, setMoveTargets] = useState({});
-
   async function apiGet(path) {
     const response = await fetch(path);
     return await response.json();
@@ -87,26 +85,6 @@ function App() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify(body)
-    });
-
-    return await response.json();
-  }
-
-  async function apiPut(path, body = {}) {
-    const response = await fetch(path, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-
-    return await response.json();
-  }
-
-  async function apiDelete(path) {
-    const response = await fetch(path, {
-      method: "DELETE"
     });
 
     return await response.json();
@@ -150,36 +128,6 @@ function App() {
     setNewArticle(emptyArticleForm);
     setNewArticleImage(null);
     setShowArticleForm(false);
-  }
-
-  function updateMoveTarget(articleId, shelfPosition) {
-    setMoveTargets((old) => ({
-      ...old,
-      [articleId]: Number(shelfPosition)
-    }));
-  }
-
-  function getMoveTarget(article) {
-    return moveTargets[article.id] || article.shelf_position;
-  }
-
-  function buildArticlePayload(article, overrides = {}) {
-    const nextArticle = {
-      ...article,
-      ...overrides
-    };
-
-    return {
-      name: nextArticle.name,
-      ean: nextArticle.ean || "",
-      quantity: Number(nextArticle.quantity || 0),
-      description: nextArticle.description || "",
-      shelf_position: Number(nextArticle.shelf_position),
-      category_id: nextArticle.category_id ? Number(nextArticle.category_id) : null,
-      green_from: Number(nextArticle.green_from || 100),
-      yellow_from: Number(nextArticle.yellow_from || 20),
-      red_below: Number(nextArticle.red_below || 5)
-    };
   }
 
   async function saveNewArticle() {
@@ -231,89 +179,11 @@ function App() {
 
       await loadAllArticles();
       await loadArticles();
-
-      if (createResult.article?.shelf_position) {
-        await lightShelfPreview(createResult.article.shelf_position, "w");
-      }
     } catch (error) {
       showMessage(`Artikel konnte nicht gespeichert werden: ${error.message}`);
     } finally {
       setSavingArticle(false);
     }
-  }
-
-  async function moveArticle(article) {
-    const nextShelfPosition = Number(getMoveTarget(article));
-
-    if (nextShelfPosition === Number(article.shelf_position)) {
-      showMessage("Artikel ist bereits in diesem Fach");
-      return;
-    }
-
-    const result = await apiPut(
-      `/api/articles/${article.id}`,
-      buildArticlePayload(article, {
-        shelf_position: nextShelfPosition
-      })
-    );
-
-    if (!result.ok) {
-      showMessage(result.message || "Artikel konnte nicht umgeräumt werden");
-      return;
-    }
-
-    showMessage(
-      `${article.name} wurde nach Fach ${formatShelfNumber(nextShelfPosition)} umgeräumt`
-    );
-
-    setMoveTargets((old) => {
-      const next = { ...old };
-      delete next[article.id];
-      return next;
-    });
-
-    await loadAllArticles();
-    await loadArticles();
-    await lightShelfPreview(nextShelfPosition, "w");
-  }
-
-  async function deleteArticle(article) {
-    const confirmed = window.confirm(
-      `Artikel wirklich aus der App entfernen?\n\n${article.name}\nFach ${formatShelfNumber(article.shelf_position)}`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    await apiPost("/api/led/all/off");
-
-    const result = await apiDelete(`/api/articles/${article.id}`);
-
-    if (!result.ok) {
-      showMessage(result.message || "Artikel konnte nicht gelöscht werden");
-      return;
-    }
-
-    showMessage(`${article.name} wurde aus dem System entfernt`);
-
-    setArticles((oldArticles) =>
-      oldArticles.filter((item) => item.id !== article.id)
-    );
-
-    setAllArticles((oldArticles) =>
-      oldArticles.filter((item) => item.id !== article.id)
-    );
-
-    setMoveTargets((old) => {
-      const next = { ...old };
-      delete next[article.id];
-      return next;
-    });
-
-    await loadAllArticles();
-    await loadArticles();
-    await loadLedStatus();
   }
 
   async function loadCategories() {
@@ -1148,37 +1018,6 @@ function App() {
                     setQuantity(article, Number(event.target.value))
                   }
                 />
-              </div>
-
-              <div className="article-management">
-                <label className="move-field">
-                  Umräumen nach
-                  <select
-                    value={getMoveTarget(article)}
-                    onChange={(event) =>
-                      updateMoveTarget(article.id, Number(event.target.value))
-                    }
-                  >
-                    {Array.from({ length: 72 }, (_, index) => {
-                      const shelfNumber = index + 1;
-
-                      return (
-                        <option key={shelfNumber} value={shelfNumber}>
-                          Fach {formatShelfNumber(shelfNumber)}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-
-                <button onClick={() => moveArticle(article)}>Umräumen</button>
-
-                <button
-                  className="danger-button"
-                  onClick={() => deleteArticle(article)}
-                >
-                  Löschen
-                </button>
               </div>
             </div>
           </article>
