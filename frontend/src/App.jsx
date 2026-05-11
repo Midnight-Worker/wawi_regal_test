@@ -1,42 +1,38 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./style.css";
 
-const colorButtons = [
-  { key: "r", label: "Rot", className: "red" },
-  { key: "g", label: "Grün", className: "green" },
-  { key: "b", label: "Blau", className: "blue" },
-  { key: "w", label: "Weiß", className: "white" },
-  { key: "t", label: "Türkis", className: "turquoise" },
-  { key: "y", label: "Gelb", className: "yellow" },
-  { key: "o", label: "Aus", className: "off" }
-];
+const stockColorNames = {
+  r: "Rot",
+  y: "Gelb",
+  g: "Grün",
+  o: "Aus"
+};
 
-const colorClassMap = {
-  r: "red",
-  g: "green",
-  b: "blue",
-  w: "white",
-  t: "turquoise",
-  y: "yellow",
-  o: "off"
+const stockColorClassMap = {
+  r: "stock-red",
+  y: "stock-yellow",
+  g: "stock-green",
+  o: "stock-off"
 };
 
 function App() {
+  const [articles, setArticles] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [ledStatus, setLedStatus] = useState({
+    connected: false,
+    port: "",
+    baudrate: 115200,
+    logs: []
+  });
+
+  const [search, setSearch] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
   const [ports, setPorts] = useState([]);
   const [selectedPort, setSelectedPort] = useState("/dev/ttyUSB0");
   const [baudrate, setBaudrate] = useState(115200);
-  const [connected, setConnected] = useState(false);
-
-  const [selectedLed, setSelectedLed] = useState(1);
-  const [rawCommand, setRawCommand] = useState("");
-  const [logs, setLogs] = useState([]);
-  const [ledColors, setLedColors] = useState(() => {
-    const initial = {};
-    for (let i = 1; i <= 72; i++) {
-      initial[i] = "o";
-    }
-    return initial;
-  });
 
   async function apiGet(path) {
     const response = await fetch(path);
@@ -55,21 +51,90 @@ function App() {
     return await response.json();
   }
 
-  function addLog(message) {
-    const time = new Date().toLocaleTimeString();
+  function showMessage(text) {
+    setMessage(text || "");
 
-    setLogs((oldLogs) => {
-      const nextLogs = [...oldLogs, `[${time}] ${message}`];
-      return nextLogs.slice(-120);
-    });
+    if (text) {
+      window.clearTimeout(showMessage.timer);
+      showMessage.timer = window.setTimeout(() => {
+        setMessage("");
+      }, 3500);
+    }
+  }
+
+  async function loadCategories() {
+    try {
+      const result = await apiGet("/api/categories");
+
+      if (!result.ok) {
+        showMessage(result.message || "Kategorien konnten nicht geladen werden");
+        return;
+      }
+
+      setCategories(result.categories);
+    } catch (error) {
+      showMessage(`Kategorien konnten nicht geladen werden: ${error.message}`);
+    }
+  }
+
+  async function loadArticles() {
+    try {
+      setLoading(true);
+
+      const params = new URLSearchParams();
+
+      if (search.trim()) {
+        params.set("search", search.trim());
+      }
+
+      if (selectedCategoryId) {
+        params.set("category_id", selectedCategoryId);
+      }
+
+      const query = params.toString();
+      const path = query ? `/api/articles?${query}` : "/api/articles";
+
+      const result = await apiGet(path);
+
+      if (!result.ok) {
+        showMessage(result.message || "Artikel konnten nicht geladen werden");
+        return;
+      }
+
+      setArticles(result.articles);
+    } catch (error) {
+      showMessage(`Artikel konnten nicht geladen werden: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadLedStatus() {
+    try {
+      const result = await apiGet("/api/led/status");
+      setLedStatus(result);
+
+      if (result.port) {
+        setSelectedPort(result.port);
+      }
+
+      if (result.baudrate) {
+        setBaudrate(result.baudrate);
+      }
+    } catch {
+      setLedStatus((old) => ({
+        ...old,
+        connected: false
+      }));
+    }
   }
 
   async function loadPorts() {
     try {
-      const result = await apiGet("/api/ports");
+      const result = await apiGet("/api/led/ports");
 
       if (!result.ok) {
-        addLog(result.message || "Ports konnten nicht geladen werden");
+        showMessage(result.message || "Ports konnten nicht geladen werden");
         return;
       }
 
@@ -84,310 +149,386 @@ function App() {
 
         setSelectedPort(preferredPort.path);
       }
-
-      addLog("Ports geladen");
     } catch (error) {
-      addLog(`Ports konnten nicht geladen werden: ${error.message}`);
+      showMessage(`Ports konnten nicht geladen werden: ${error.message}`);
     }
   }
 
-  async function refreshStatus() {
-    try {
-      const result = await apiGet("/api/status");
-
-      setConnected(result.connected);
-
-      if (result.port) {
-        setSelectedPort(result.port);
-      }
-
-      if (Array.isArray(result.logs)) {
-        const arduinoLines = result.logs.map((item) => {
-          const time = new Date(item.time).toLocaleTimeString();
-          return `[${time}] Arduino: ${item.line}`;
-        });
-
-        setLogs((oldLogs) => {
-          const merged = [...oldLogs, ...arduinoLines];
-          return Array.from(new Set(merged)).slice(-120);
-        });
-      }
-    } catch {
-      setConnected(false);
-    }
-  }
-
-  async function connect() {
-    const result = await apiPost("/api/connect", {
+  async function connectLed() {
+    const result = await apiPost("/api/led/connect", {
       port: selectedPort,
       baudrate
     });
 
-    setConnected(Boolean(result.connected));
-    addLog(result.message);
+    showMessage(result.message);
+    await loadLedStatus();
   }
 
-  async function disconnect() {
-    const result = await apiPost("/api/disconnect");
+  async function disconnectLed() {
+    const result = await apiPost("/api/led/disconnect");
 
-    setConnected(false);
-    addLog(result.message);
+    showMessage(result.message);
+    await loadLedStatus();
   }
 
-  async function setLed(number, color) {
-    const result = await apiPost("/api/led", {
-      number,
-      color
-    });
+  async function allOff() {
+    const result = await apiPost("/api/led/all/off");
 
-    addLog(result.message);
-
-    if (result.ok) {
-      setLedColors((old) => ({
-        ...old,
-        [number]: color
-      }));
-    }
-  }
-
-  async function setAll(color) {
-    const result = await apiPost("/api/all", {
-      color
-    });
-
-    addLog(result.message);
-
-    if (result.ok) {
-      const next = {};
-      for (let i = 1; i <= 72; i++) {
-        next[i] = color;
-      }
-      setLedColors(next);
-    }
-  }
-
-  async function sendRaw() {
-    const command = rawCommand.trim();
-
-    if (!command) {
-      addLog("Kein Befehl eingegeben");
-      return;
-    }
-
-    const result = await apiPost("/api/command", {
-      command
-    });
-
-    addLog(result.message);
-
-    if (result.ok) {
-      updateUiFromCommand(command);
-    }
+    showMessage(result.message);
   }
 
   async function strandtest() {
-    const result = await apiPost("/api/strandtest");
-    addLog(result.message);
+    const result = await apiPost("/api/led/strandtest");
+
+    showMessage(result.message);
   }
 
-  function updateUiFromCommand(command) {
-    const clean = command.trim().toLowerCase();
+  async function lightArticle(articleId) {
+    const result = await apiPost(`/api/articles/${articleId}/light`);
 
-    if (clean.length === 2 && clean[0] === "a") {
-      const color = clean[1];
+    showMessage(result.message);
 
-      if (colorClassMap[color]) {
-        const next = {};
-        for (let i = 1; i <= 72; i++) {
-          next[i] = color;
-        }
-        setLedColors(next);
-      }
+    if (!result.ok) {
+      return;
     }
 
-    const color = clean[0];
-    const number = Number(clean.slice(1));
+    await loadLedStatus();
+  }
 
-    if (colorClassMap[color] && number >= 1 && number <= 72) {
-      setLedColors((old) => ({
-        ...old,
-        [number]: color
-      }));
+  async function setQuantity(article, nextQuantity) {
+    const quantity = Math.max(0, Number(nextQuantity));
+
+    const result = await apiPost(`/api/articles/${article.id}/quantity`, {
+      quantity
+    });
+
+    showMessage(result.message);
+
+    if (result.ok && result.article) {
+      setArticles((oldArticles) =>
+        oldArticles.map((item) =>
+          item.id === article.id ? result.article : item
+        )
+      );
     }
   }
 
-  function handleRawKeyDown(event) {
+  function handleSearchKeyDown(event) {
     if (event.key === "Enter") {
-      sendRaw();
+      loadArticles();
     }
   }
+
+  const shelfGroups = useMemo(() => {
+    const map = new Map();
+
+    for (const article of articles) {
+      const key = article.shelf_position;
+
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+
+      map.get(key).push(article);
+    }
+
+    return map;
+  }, [articles]);
 
   useEffect(() => {
+    loadCategories();
     loadPorts();
-    refreshStatus();
+    loadLedStatus();
+    loadArticles();
 
-    const interval = setInterval(refreshStatus, 3000);
+    const interval = window.setInterval(() => {
+      loadLedStatus();
+    }, 3000);
 
     return () => {
-      clearInterval(interval);
+      window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      loadArticles();
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [search, selectedCategoryId]);
 
   return (
     <main className="app">
       <header className="hero">
         <div>
-          <h1>Regalbeleuchtung</h1>
-          <p>Tablet → Browser → Raspberry Pi → Arduino → WS2812</p>
+          <p className="eyebrow">Regalbeleuchtung</p>
+          <h1>Lager-Finder</h1>
+          <p className="hero-text">
+            Artikel suchen, Fach anzeigen, Bestand prüfen.
+          </p>
         </div>
 
-        <div className={connected ? "status connected" : "status"}>
-          {connected ? "verbunden" : "nicht verbunden"}
+        <div className={ledStatus.connected ? "status connected" : "status"}>
+          <span className="status-dot" />
+          {ledStatus.connected ? "LED verbunden" : "LED nicht verbunden"}
         </div>
       </header>
 
-      <section className="card">
-        <h2>Verbindung</h2>
+      {message && <div className="message">{message}</div>}
 
-        <div className="row">
-          <label>
-            Port
-            <select
-              value={selectedPort}
-              onChange={(event) => setSelectedPort(event.target.value)}
-            >
-              {ports.length === 0 && (
-                <>
-                  <option value="/dev/ttyUSB0">/dev/ttyUSB0</option>
-                  <option value="/dev/ttyACM0">/dev/ttyACM0</option>
-                </>
-              )}
+      <section className="card connection-card">
+        <div>
+          <h2>LED-Verbindung</h2>
+          <p className="muted">
+            {ledStatus.port || "Kein Port"} @ {ledStatus.baudrate || baudrate}
+          </p>
+        </div>
 
-              {ports.map((port) => (
-                <option key={port.path} value={port.path}>
-                  {port.path}
-                  {port.friendlyName ? ` - ${port.friendlyName}` : ""}
-                  {port.manufacturer ? ` - ${port.manufacturer}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="connection-controls">
+          <select
+            value={selectedPort}
+            onChange={(event) => setSelectedPort(event.target.value)}
+          >
+            {ports.length === 0 && (
+              <>
+                <option value="/dev/ttyUSB0">/dev/ttyUSB0</option>
+                <option value="/dev/ttyACM0">/dev/ttyACM0</option>
+              </>
+            )}
 
-          <label>
-            Baudrate
-            <input
-              type="number"
-              value={baudrate}
-              onChange={(event) => setBaudrate(Number(event.target.value))}
-            />
-          </label>
+            {ports.map((port) => (
+              <option key={port.path} value={port.path}>
+                {port.path}
+                {port.friendlyName ? ` - ${port.friendlyName}` : ""}
+                {port.manufacturer ? ` - ${port.manufacturer}` : ""}
+              </option>
+            ))}
+          </select>
 
-          <button className="primary" onClick={connect}>
+          <input
+            className="baudrate-input"
+            type="number"
+            value={baudrate}
+            onChange={(event) => setBaudrate(Number(event.target.value))}
+          />
+
+          <button className="primary" onClick={connectLed}>
             Verbinden
           </button>
 
-          <button onClick={disconnect}>Trennen</button>
+          <button onClick={disconnectLed}>Trennen</button>
 
-          <button onClick={loadPorts}>Ports neu laden</button>
+          <button onClick={allOff}>Alle aus</button>
+
+          <button onClick={strandtest}>Test</button>
         </div>
       </section>
 
-      <section className="card">
-        <h2>Einzelne LED</h2>
-
-        <div className="row">
-          <label>
-            LED-Nummer
-            <input
-              type="number"
-              min="1"
-              max="72"
-              value={selectedLed}
-              onChange={(event) => setSelectedLed(Number(event.target.value))}
-            />
-          </label>
-
-          <div className="button-row">
-            {colorButtons.map((color) => (
-              <button
-                key={color.key}
-                className={`color ${color.className}`}
-                onClick={() => setLed(selectedLed, color.key)}
-              >
-                {color.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>Alle LEDs</h2>
-
-        <div className="button-row">
-          {colorButtons.map((color) => (
-            <button
-              key={color.key}
-              className={`color ${color.className}`}
-              onClick={() => setAll(color.key)}
-            >
-              Alle {color.label}
-            </button>
-          ))}
-
-          <button className="primary" onClick={strandtest}>
-            Strandtest
-          </button>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>Direkter Befehl</h2>
-
-        <div className="row">
+      <section className="card search-card">
+        <div className="search-line">
           <input
-            className="raw"
-            value={rawCommand}
-            placeholder="z. B. r27, ar, ao, s"
-            onChange={(event) => setRawCommand(event.target.value)}
-            onKeyDown={handleRawKeyDown}
+            className="search-input"
+            value={search}
+            placeholder="Artikel, EAN, Kategorie oder Beschreibung suchen..."
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            autoFocus
           />
 
-          <button onClick={sendRaw}>Senden</button>
+          <select
+            className="category-select"
+            value={selectedCategoryId}
+            onChange={(event) => setSelectedCategoryId(event.target.value)}
+          >
+            <option value="">Alle Kategorien</option>
+
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+
+          <button className="primary" onClick={loadArticles}>
+            Suchen
+          </button>
         </div>
 
-        <p className="hint">
-          Beispiele: r27, g1, y32, o32, ar, ag, ab, aw, at, ay, ao, s
-        </p>
+        <div className="result-info">
+          {loading ? "Lade Artikel..." : `${articles.length} Artikel gefunden`}
+        </div>
       </section>
 
-      <section className="card">
-        <h2>LED-Raster</h2>
+      <section className="shelf-overview">
+        <h2>Belegte Fächer</h2>
 
-        <div className="led-grid">
+        <div className="shelf-grid">
           {Array.from({ length: 72 }, (_, index) => {
-            const number = index + 1;
-            const color = ledColors[number] || "o";
+            const shelfNumber = index + 1;
+            const shelfArticles = shelfGroups.get(shelfNumber) || [];
 
             return (
               <button
-                key={number}
-                className={`led ${colorClassMap[color] || "off"} ${
-                  selectedLed === number ? "selected" : ""
-                }`}
-                onClick={() => setSelectedLed(number)}
+                key={shelfNumber}
+                className={
+                  shelfArticles.length > 0
+                    ? "shelf-cell filled"
+                    : "shelf-cell"
+                }
+                onClick={() => {
+                  setSelectedCategoryId("");
+                  setSearch("");
+                  window.setTimeout(() => {
+                    const element = document.getElementById(
+                      `shelf-${shelfNumber}`
+                    );
+
+                    if (element) {
+                      element.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start"
+                      });
+                    }
+                  }, 50);
+                }}
+                title={
+                  shelfArticles.length > 0
+                    ? shelfArticles.map((item) => item.name).join(", ")
+                    : `Fach ${shelfNumber}`
+                }
               >
-                {number}
+                <span>{shelfNumber}</span>
+                {shelfArticles.length > 0 && (
+                  <small>{shelfArticles.length}</small>
+                )}
               </button>
             );
           })}
         </div>
       </section>
 
-      <section className="card">
-        <h2>Log</h2>
+      <section className="article-list">
+        {articles.map((article) => (
+          <article
+            className="article-card"
+            key={article.id}
+            id={`shelf-${article.shelf_position}`}
+          >
+            <div className="article-image">
+              {article.image_path ? (
+                <img src={article.image_path} alt={article.name} />
+              ) : (
+                <span>kein Bild</span>
+              )}
+            </div>
 
-        <pre className="log">{logs.join("\n")}</pre>
+            <div className="article-content">
+              <div className="article-topline">
+                <span
+                  className={`stock-pill ${
+                    stockColorClassMap[article.stock_color] || "stock-off"
+                  }`}
+                >
+                  {stockColorNames[article.stock_color] || "?"}
+                </span>
+
+                <span className="shelf-badge">Fach {article.shelf_position}</span>
+
+                {article.category_name && (
+                  <span className="category-badge">{article.category_name}</span>
+                )}
+              </div>
+
+              <h2>{article.name}</h2>
+
+              <p className="description">
+                {article.description || "Keine Beschreibung vorhanden."}
+              </p>
+
+              <div className="meta-grid">
+                <div>
+                  <span>EAN</span>
+                  <strong>{article.ean || "—"}</strong>
+                </div>
+
+                <div>
+                  <span>Bestand</span>
+                  <strong>{article.quantity}</strong>
+                </div>
+
+                <div>
+                  <span>Rot unter</span>
+                  <strong>{article.red_below}</strong>
+                </div>
+
+                <div>
+                  <span>Gelb unter</span>
+                  <strong>{article.yellow_from}</strong>
+                </div>
+
+                <div>
+                  <span>Grün ab</span>
+                  <strong>{article.green_from}</strong>
+                </div>
+              </div>
+
+              <div className="article-actions">
+                <button
+                  className="primary big-action"
+                  onClick={() => lightArticle(article.id)}
+                >
+                  Fach anzeigen
+                </button>
+
+                <button
+                  onClick={() => setQuantity(article, article.quantity - 1)}
+                >
+                  -1
+                </button>
+
+                <button
+                  onClick={() => setQuantity(article, article.quantity + 1)}
+                >
+                  +1
+                </button>
+
+                <input
+                  className="quantity-input"
+                  type="number"
+                  min="0"
+                  value={article.quantity}
+                  onChange={(event) =>
+                    setQuantity(article, Number(event.target.value))
+                  }
+                />
+              </div>
+            </div>
+          </article>
+        ))}
+
+        {!loading && articles.length === 0 && (
+          <div className="empty-state">
+            <h2>Nichts gefunden</h2>
+            <p>Suchbegriff ändern oder Kategorie zurücksetzen.</p>
+          </div>
+        )}
+      </section>
+
+      <section className="card log-card">
+        <h2>Arduino-Log</h2>
+
+        <pre>
+          {(ledStatus.logs || [])
+            .slice(-20)
+            .map((item) => {
+              const time = new Date(item.time).toLocaleTimeString();
+              return `[${time}] ${item.line}`;
+            })
+            .join("\n")}
+        </pre>
       </section>
     </main>
   );
